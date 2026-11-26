@@ -26,6 +26,7 @@ public class UserService extends IUserService.Stub {
 
     private static final String BIN = "/data/local/tmp/timer";
     private static final String LOG = "/data/local/tmp/timer.log";
+    private static final String APATCH_PKG = "me.bmax.apatch";
     private static final int MAX_OUTPUT = 20000;
 
     private Process rootProcess;
@@ -197,7 +198,7 @@ public class UserService extends IUserService.Stub {
         return "root shell closed";
     }
 
-    /** SELinux / Seccomp / ksud, as shown on the home card. */
+    /** SELinux / Seccomp / ksud / apd status, as shown on the home card. */
     @Override
     public String info() {
         String selinux = execOut("getenforce");
@@ -211,8 +212,35 @@ public class UserService extends IUserService.Stub {
         }
         String ksu = execOut("/system/bin/su -c id").contains("u:r:ksu:s0")
                 ? "active" : "not loaded";
+        String apdPath = findApd();
+        String apd = apdPath != null ? execOut("\"" + apdPath + "\" -V") : "not installed";
+        String apatch = new File("/sys/module/kernelpatch").isDirectory()
+                ? "active" : "not loaded";
         return "selinux=" + selinux + "\nseccomp=" + seccomp + "\nksud=" + ksud
-                + "\nksu=" + ksu + "\n";
+                + "\nksu=" + ksu + "\napd=" + apd + "\napatch=" + apatch + "\n";
+    }
+
+    @Override
+    public String loadApatch() {
+        if (rootProcess == null || !rootProcess.isAlive()) {
+            return "root shell not open";
+        }
+        String apdPath = findApd();
+        if (apdPath == null) {
+            return "apd not found (install APatch manager)";
+        }
+        String out = execRoot("setenforce 0 2>/dev/null; \"" + apdPath
+                + "\" late-load --package-name " + APATCH_PKG);
+        return "APATCH_STARTED\n" + out.trim();
+    }
+
+    private String findApd() {
+        if (new File("/data/adb/apd").canExecute()) {
+            return "/data/adb/apd";
+        }
+        String found = execOut("ls /data/app/*/" + APATCH_PKG + "-*/lib/arm64/libapd.so "
+                + "/data/app/" + APATCH_PKG + "-*/lib/arm64/libapd.so 2>/dev/null | head -n 1");
+        return (found.startsWith("/") && new File(found).exists()) ? found : null;
     }
 
     @Override

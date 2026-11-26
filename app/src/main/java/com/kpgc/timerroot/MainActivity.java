@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
     private TextView detailKernel;
     private TextView detailKsud;
     private TextView detailKsu;
+    private TextView detailApatch;
     private TextView detailSelinux;
     private TextView detailSeccomp;
     private TextView logText;
@@ -76,6 +77,8 @@ public class MainActivity extends Activity {
     private TextView tabLog;
     private String ksud = "-";
     private String ksu = "unknown";
+    private String apd = "not installed";
+    private String apatch = "unknown";
     private String selinux = "-";
     private String seccomp = "-";
 
@@ -200,6 +203,7 @@ public class MainActivity extends Activity {
         detailKernel = addRow(details, "Kernel", "-", true);
         detailKsud = addRow(details, "ksud", "-", true);
         detailKsu = addRow(details, "KernelSU", "-", true);
+        detailApatch = addRow(details, "APatch", "-", true);
         detailSelinux = addRow(details, "SELinux", "-", true);
         detailSeccomp = addRow(details, "Seccomp", "-", false);
         body.addView(details);
@@ -216,6 +220,8 @@ public class MainActivity extends Activity {
         body.addView(bigButton("Get root shell", GREEN, 0xFF04140A, v -> confirmRoot()));
         body.addView(spacer(8));
         body.addView(bigButton("Load KernelSU", 0xFF1F7A3D, 0xFFE8FFF0, v -> confirmKsu()));
+        body.addView(spacer(8));
+        body.addView(bigButton("Load APatch", 0xFF1F5A7A, 0xFFE8F7FF, v -> confirmApatch()));
         body.addView(spacer(8));
         body.addView(bigButton("Stop", CARD, RED, v -> stopRoot()));
 
@@ -437,6 +443,10 @@ public class MainActivity extends Activity {
                 ksud = value;
             } else if (key.equals("ksu")) {
                 ksu = value;
+            } else if (key.equals("apd")) {
+                apd = value;
+            } else if (key.equals("apatch")) {
+                apatch = value;
             }
         }
     }
@@ -448,16 +458,24 @@ public class MainActivity extends Activity {
     }
 
     private void applyDetails() {
+        boolean apatchActive = "active".equals(apatch);
+        boolean ksuActive = "active".equals(ksu);
         if (statusCard != null) {
             statusCard.setBackground(cardBackground(
-                    rootOpen || "active".equals(ksu) ? GREEN_DARK : CARD));
+                    rootOpen || ksuActive || apatchActive ? GREEN_DARK : CARD));
         }
         detailKsud.setText(ksud);
-        detailKsu.setText("active".equals(ksu) ? "jailbreak mode (u:r:ksu:s0)" : ksu);
+        detailKsu.setText(ksuActive ? "jailbreak mode (u:r:ksu:s0)" : ksu);
+        detailApatch.setText(apatchActive ? "jailbreak mode (kernelpatch)" : apd);
         detailSelinux.setText(selinux);
         detailSeccomp.setText(seccomp);
         boolean shizuku = safePing();
-        if ("active".equals(ksu)) {
+        if (apatchActive) {
+            statusTitle.setText("Jailbreak mode");
+            statusSubtitle.setText("APatch loaded · kernelpatch active · gone after reboot");
+            statusBadge.setText("✓");
+            statusBadge.setTextColor(GREEN);
+        } else if (ksuActive) {
             statusTitle.setText("Jailbreak mode");
             statusSubtitle.setText("KernelSU loaded · su in u:r:ksu:s0 · gone after reboot");
             statusBadge.setText("✓");
@@ -583,9 +601,14 @@ public class MainActivity extends Activity {
                 rootOpen = out.contains("uid=0(root)") || out.contains("started");
                 addLog(out);
                 ui.post(this::applyDetails);
-                if (rootOpen && !"active".equals(ksu)) {
-                    addLog("root shell ready - loading KernelSU...");
-                    runKsu();
+                if (rootOpen && !"active".equals(ksu) && !"active".equals(apatch)) {
+                    if (!"not installed".equals(apd)) {
+                        addLog("root shell ready - loading APatch...");
+                        runApatch();
+                    } else {
+                        addLog("root shell ready - loading KernelSU...");
+                        runKsu();
+                    }
                 }
             } catch (Throwable t) {
                 addLog("root failed: " + t);
@@ -670,6 +693,87 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    private void confirmApatch() {
+        new AlertDialog.Builder(this)
+                .setTitle("Load APatch?")
+                .setMessage("Late-loads KernelPatch via apd late-load.\n\n"
+                        + "- Requires APatch manager (me.bmax.apatch) installed\n"
+                        + "- Opens a root shell first if not already open\n"
+                        + "- APatch disappears when you reboot")
+                .setPositiveButton("Run", (d, w) -> runApatch())
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private void runApatch() {
+        if (service == null) {
+            addLog("bind the service first");
+            return;
+        }
+        new Thread(() -> {
+            try {
+                if (!rootOpen) {
+                    String openOut = service.openRoot();
+                    rootOpen = openOut.contains("uid=0(root)") || openOut.contains("started");
+                    addLog(openOut);
+                    ui.post(this::applyDetails);
+                    if (!rootOpen) {
+                        ui.post(() -> toast("failed to open root shell"));
+                        return;
+                    }
+                }
+                String startOut = service.loadApatch();
+                addLog(startOut);
+                if (!startOut.startsWith("APATCH_STARTED")) {
+                    final String reason = startOut.trim();
+                    ui.post(() -> {
+                        statusTitle.setText("APatch failed");
+                        statusSubtitle.setText(reason);
+                        statusBadge.setText("!");
+                        statusBadge.setTextColor(RED);
+                        toast("APatch failed: " + reason);
+                    });
+                    return;
+                }
+                final long start = System.currentTimeMillis();
+                boolean loaded = false;
+                while (System.currentTimeMillis() - start < 30000) {
+                    Thread.sleep(1000);
+                    parseInfo(service.info());
+                    if ("active".equals(apatch)) {
+                        loaded = true;
+                        break;
+                    }
+                    final long secs = (System.currentTimeMillis() - start) / 1000;
+                    if (secs % 3 == 0) {
+                        ui.post(() -> {
+                            if (statusSubtitle != null) {
+                                statusSubtitle.setText("Loading APatch... " + secs + "s");
+                            }
+                        });
+                    }
+                }
+                final boolean ok = loaded;
+                ui.post(() -> {
+                    applyDetails();
+                    if (ok) {
+                        toast("APatch loaded (jailbreak mode)");
+                        refreshDetails();
+                    } else {
+                        statusTitle.setText("APatch failed");
+                        statusSubtitle.setText("timed out after 30s - check logcat / reboot");
+                        statusBadge.setText("!");
+                        statusBadge.setTextColor(RED);
+                        toast("APatch failed: timed out");
+                        addLog("APatch failed: kernelpatch module not detected after 30s");
+                    }
+                });
+            } catch (Throwable t) {
+                addLog("apatch failed: " + t);
+            }
+        }).start();
+    }
+
     private void stopRoot() {
         if (service == null) {
             return;
@@ -738,7 +842,7 @@ public class MainActivity extends Activity {
                 .daemon(false)
                 .processNameSuffix("timer")
                 .debuggable(false)
-                .version(5);
+                .version(6);
     }
 
     private void copyLog() {

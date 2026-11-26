@@ -12,4 +12,5 @@ interface IUserService {
     String closeRoot() = 8;
     String info() = 9;
     String rebootDevice() = 10;
+    String loadApatch() = 11;
 }
