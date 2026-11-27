@@ -213,7 +213,9 @@ public class UserService extends IUserService.Stub {
         String ksu = execOut("/system/bin/su -c id").contains("u:r:ksu:s0")
                 ? "active" : "not loaded";
         String apdPath = findApd();
-        String apd = apdPath != null ? execOut("\"" + apdPath + "\" -V") : "not installed";
+        String apd = apdPath != null
+                ? execOut("\"" + apdPath + "\" -V | head -n 1").replace('\n', ' ')
+                : "not installed";
         String apatch = new File("/sys/module/kernelpatch").isDirectory()
                 ? "active" : "not loaded";
         return "selinux=" + selinux + "\nseccomp=" + seccomp + "\nksud=" + ksud
@@ -237,6 +239,14 @@ public class UserService extends IUserService.Stub {
     private String findApd() {
         if (new File("/data/adb/apd").canExecute()) {
             return "/data/adb/apd";
+        }
+        String pkgLine = execOut("pm path " + APATCH_PKG + " 2>/dev/null | head -n 1");
+        if (pkgLine.startsWith("package:")) {
+            File apk = new File(pkgLine.substring("package:".length()).trim());
+            File libApd = new File(apk.getParentFile(), "lib/arm64/libapd.so");
+            if (libApd.exists()) {
+                return libApd.getAbsolutePath();
+            }
         }
         String found = execOut("ls /data/app/*/" + APATCH_PKG + "-*/lib/arm64/libapd.so "
                 + "/data/app/" + APATCH_PKG + "-*/lib/arm64/libapd.so 2>/dev/null | head -n 1");
