@@ -30,6 +30,8 @@ MainActivity (untrusted_app)
   via wireless debugging, or over ADB)
 - [KernelSU](https://github.com/tiann/KernelSU) manager installed, for the
   `Load KernelSU` path
+- [APatch](https://github.com/bmax121/APatch) manager (`me.bmax.apatch`)
+  installed, for the `Load APatch` path (`apd late-load`)
 - A kernel build the exploit was ported to. The upstream binary targets
   `6.12.69-android16-6-g242e1a07f878-ab15865446-4k`; see below.
 
